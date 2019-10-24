@@ -357,7 +357,7 @@ public class RReceiveUDP implements RReceiveUDPI {
 						}
 
 						for (int x = 0; x < writtenData.length; x++) {
-							System.out.print(x + 1 + ":" + writtenData[x] + " ");
+							//System.out.print(x + 1 + ":" + writtenData[x] + " ");
 						}
 						System.out.println();
 
@@ -549,8 +549,8 @@ public class RReceiveUDP implements RReceiveUDPI {
 	public static void main(String[] args) {
 		RReceiveUDP receiver = new RReceiveUDP();
 		receiver.setMode(1);
-		receiver.setModeParameter(4);
-		receiver.setFilename("less_important.txt");
+		receiver.setModeParameter(1600);
+		receiver.setFilename("less_important.png");
 		receiver.setLocalPort(32456); // sets receiver port
 
 		receiver.receiveFile();

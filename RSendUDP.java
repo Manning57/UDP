@@ -373,9 +373,9 @@ public class RSendUDP implements RSendUDPI {
 				if (ackReceived > 0) {
 					acksReceived[ackReceived - 1] = 1;
 					for (int x = 0; x < acksReceived.length; x++) {
-						System.out.print(x + 1 + ":" + acksReceived[x] + " ");
+						//System.out.print(x + 1 + ":" + acksReceived[x] + " ");
 					}
-					System.out.println();
+					//System.out.println();
 					System.out.println();
 				}
 
@@ -582,9 +582,9 @@ public class RSendUDP implements RSendUDPI {
 	public static void main(String[] args) {
 		RSendUDP sender = new RSendUDP();
 		sender.setMode(1);
-		sender.setModeParameter(4);
+		sender.setModeParameter(1600);
 		sender.setTimeout(1000);
-		sender.setFilename("important.txt");
+		sender.setFilename("important.png");
 		sender.setLocalPort(23456);
 		sender.setReceiver(new InetSocketAddress("10.20.28.155", 32456));
 
