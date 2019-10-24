@@ -40,6 +40,16 @@ public class RSendUDP implements RSendUDPI {
 	InetSocketAddress ReceiverAddress = new InetSocketAddress(LocalHost, RECPORT);
 	InetSocketAddress SenderAddress = new InetSocketAddress(LocalHost, SENDPORT);
 
+	// sender header
+	private static byte[] ackBuffer = new byte[4];
+	private static int ackNumber = 0;
+	private static byte[] seqBuffer = new byte[4];
+	private static int seqNumber = 1;
+	private static byte[] windowBuffer = new byte[4];
+
+	// receiver header
+	private static byte[] recBuffer = new byte[4];
+
 	private static byte[] constructPacket(byte[] seq, byte[] ack, byte[] window, byte[] pay) {
 
 		byte[] preHeader = new byte[HL - 4];
@@ -139,17 +149,6 @@ public class RSendUDP implements RSendUDPI {
 	}
 
 	private static void initializeTransfer(int iterations) {
-		// sender header
-		byte[] ackBuffer = new byte[4];
-		int ackNumber = 0;
-		byte[] seqBuffer = new byte[4];
-		int seqNumber = 1;
-		byte[] windowBuffer = new byte[4];
-		int windowSize = (int) WindowSize;
-
-		// receiver header
-		byte[] recBuffer = new byte[4];
-
 		try {
 			socket.setSoTimeout((int) TimeOut);
 			int x = 0;
@@ -182,17 +181,6 @@ public class RSendUDP implements RSendUDPI {
 	}
 
 	private static void closeTransfer() {
-		// sender header
-		byte[] ackBuffer = new byte[4];
-		int ackNumber = 0;
-		byte[] seqBuffer = new byte[4];
-		int seqNumber = 1;
-		byte[] windowBuffer = new byte[4];
-		int windowSize = (int) WindowSize;
-
-		// receiver header
-		byte[] recBuffer = new byte[4];
-
 		try {
 			// loop until EOT messages are finalized
 			int y = 0;
@@ -201,7 +189,7 @@ public class RSendUDP implements RSendUDPI {
 				seqNumber = -1;
 				seqBuffer = ByteBuffer.allocate(4).putInt(seqNumber).array();
 				ackBuffer = ByteBuffer.allocate(4).putInt(ackNumber).array();
-				windowBuffer = ByteBuffer.allocate(4).putInt(windowSize).array();
+				windowBuffer = ByteBuffer.allocate(4).putInt((int) WindowSize).array();
 				byte[] finalPayload = new byte[0];
 				byte[] finalSendPacket = constructPacket(seqBuffer, ackBuffer, windowBuffer, finalPayload);
 				socket.send(new DatagramPacket(finalSendPacket, finalSendPacket.length, InetAddress.getByName(SERVER),
@@ -223,22 +211,80 @@ public class RSendUDP implements RSendUDPI {
 		}
 	}
 
-	private static void stopAndWait() {
-		// sender header
-		byte[] ackBuffer = new byte[4];
-		int ackNumber = 0;
-		byte[] seqBuffer = new byte[4];
-		int seqNumber = 1;
-		byte[] windowBuffer = new byte[4];
-		int windowSize = (int) WindowSize;
+	private static byte[][] formatFile(byte[] buffer) {
+		// getting file info
+		int totalLength = buffer.length;
+		int iterations = (int) Math.ceil((double) totalLength / (double) PAYLEN);
 
-		// receiver header
-		byte[] recBuffer = new byte[4];
+		// making a new buffer where the file data is formatted for sending
+		byte[][] choppedFile = new byte[iterations][1];
 
+		// putting formatted data into new buffer
+		int y = 0;
+		for (int x = 0; x < iterations; x++) {
+			seqBuffer = ByteBuffer.allocate(4).putInt(x + 1).array();
+			ackBuffer = ByteBuffer.allocate(4).putInt(x).array();
+			windowBuffer = ByteBuffer.allocate(4).putInt((int) WindowSize).array();
+			byte[] payload;
+
+			if ((buffer.length - y) < PAYLEN) {
+				int spacesToRemove = PAYLEN - (buffer.length - y);
+				ackBuffer = ByteBuffer.allocate(4).putInt(spacesToRemove).array();
+				payload = Arrays.copyOfRange(buffer, y, y + (PAYLEN - spacesToRemove));
+				choppedFile[x] = constructTrimmedPacket(seqBuffer, ackBuffer, windowBuffer, payload, spacesToRemove);
+			} else {
+				payload = Arrays.copyOfRange(buffer, y, y + PAYLEN);
+				choppedFile[x] = constructPacket(seqBuffer, ackBuffer, windowBuffer, payload);
+			}
+
+			y = y + PAYLEN;
+		}
+		return choppedFile;
+	}
+
+	private static void sendPacket(byte[][] choppedFile, int i) {
+		// selecting appropriate packet to send
+		byte[] packetToSend = choppedFile[i];
+
+		// printing message info
+		printInfo(packetToSend);
+		// printPacket(packetToSend);
+
+		// sending packet
 		try {
+			socket.send(new DatagramPacket(packetToSend, packetToSend.length, InetAddress.getByName(SERVER), RECPORT));
+		} catch (UnknownHostException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private static int receiveAck() throws IOException {
+		DatagramPacket recPacket = new DatagramPacket(recBuffer, recBuffer.length);
+		try {
+			socket.receive(recPacket);
+			recBuffer = recPacket.getData();
+			int ackRec = ByteBuffer.wrap(recBuffer).getInt();
+			System.out.println("Message " + ackRec + " acknowledged with ACK " + ackRec);
+			return ackRec;
+		}
+		// if no ACK is received, timeout will cause packet to be resent
+		catch (SocketTimeoutException e) {
+			System.out.println("Message " + seqNumber + " timeout or got incorrect ACK\n");
+			return -1;
+		}
+	}
+
+	private static void stopAndWait() {
+		try {
+			// getting file info
 			byte[] buffer = Files.readAllBytes(Paths.get(FileName));
 			int totalLength = buffer.length;
 			int iterations = (int) Math.ceil((double) totalLength / (double) PAYLEN);
+
+			// formatting the file buffer into packets
+			byte[][] choppedFile = formatFile(buffer);
 
 			// sending initial EOT message
 			initializeTransfer(iterations);
@@ -247,55 +293,22 @@ public class RSendUDP implements RSendUDPI {
 			// loop until file info is sent
 			while (ackNumber != -1) {
 
-				// making packet with (header = seq #, ack#, and windowSize) and (payload =data)
-				seqBuffer = ByteBuffer.allocate(4).putInt(seqNumber).array();
-				ackBuffer = ByteBuffer.allocate(4).putInt(ackNumber).array();
-				windowBuffer = ByteBuffer.allocate(4).putInt(windowSize).array();
-				byte[] payload;
-				byte[] sendPacket;
-
-				// trimming extra spaces for last packet sent if there are any
-				if ((buffer.length - i) < PAYLEN) {
-					int spacesToRemove = PAYLEN - (buffer.length - i);
-					ackBuffer = ByteBuffer.allocate(4).putInt(spacesToRemove).array();
-					payload = Arrays.copyOfRange(buffer, i, i + (PAYLEN - spacesToRemove));
-					sendPacket = constructTrimmedPacket(seqBuffer, ackBuffer, windowBuffer, payload, spacesToRemove);
-					String lastPacket = new String(payload);
-				} else {
-					payload = Arrays.copyOfRange(buffer, i, i + PAYLEN);
-					sendPacket = constructPacket(seqBuffer, ackBuffer, windowBuffer, payload);
-				}
-
-				// printing message info
-				printInfo(sendPacket);
-				// printPacket(sendPacket);
-
-				// sending packet
-				socket.send(new DatagramPacket(sendPacket, sendPacket.length, InetAddress.getByName(SERVER), RECPORT));
+				// sending the packet
+				sendPacket(choppedFile, i);
 
 				// receiving the ack
-				DatagramPacket recPacket = new DatagramPacket(recBuffer, recBuffer.length);
-				try {
-					socket.receive(recPacket);
-					recBuffer = recPacket.getData();
-					int ackRec = ByteBuffer.wrap(recBuffer).getInt();
-					System.out.println("Message " + seqNumber + " acknowledged with ACK " + ackRec);
+				int ackReceived = receiveAck();
 
-					// increasing counters
-					i = i + PAYLEN;
+				// updating seq and ack #
+				if (ackReceived != -1) { // if ack was received
+					i++; // go to next packet to send
 					seqNumber++;
 					ackNumber++;
-
-					// end of transmission
-					if (ackRec == iterations) {
-						// sending EOT packet
+					// end of transmission, goto closeTransfer
+					if (ackReceived == iterations) {
 						ackNumber = -1;
 					}
 					System.out.println();
-				}
-				// if no ACK is received, resend packet
-				catch (SocketTimeoutException e) {
-					System.out.println("Message " + seqNumber + " timeout or got incorrect ACK\n");
 				}
 			}
 			// ending transmission
@@ -307,49 +320,82 @@ public class RSendUDP implements RSendUDPI {
 	}
 
 	private static void slidingWindows() {
-		// sender header
-		byte[] ackBuffer = new byte[4];
-		int ackNumber = 0;
-		byte[] seqBuffer = new byte[4];
-		int seqNumber = 1;
-		byte[] windowBuffer = new byte[4];
-		int windowSize = (int) WindowSize;
-
-		// receiver header
-		byte[] recBuffer = new byte[4];
 
 		try {
+			// getting file info
 			byte[] buffer = Files.readAllBytes(Paths.get(FileName));
 			int totalLength = buffer.length;
 			int iterations = (int) Math.ceil((double) totalLength / (double) PAYLEN);
 
+			// formatting the file buffer into packets
+			byte[][] choppedFile = formatFile(buffer);
+
 			// sending initial EOT message
 			initializeTransfer(iterations);
+
+			// My sender Sliding Windows Algorithm
+			// 1.) sender will send each of the outstanding packets that fit in the window
+			// 2.) for each packet sent, if ACK isnt received by timout, retransmit
+			// 3.) once sender it receives an ACK, it will check its ACK #
+			// 4.) if the ACK # corresponds to a packet # behind the window, do nothing
+			// 5.) else if the ACK # corresponds to the last ACK needed (== iterations) goto
+			// closeTransmission
+			// 6.) Otherwise, sender will move the start of window to the packet after the
+			// ack # received
+			// 7.) if start of window seq # + (windowSize-1) > iterations, shrink window
+			// size by (seq # + (windowSize-1)- iterations)
+			// 8.) go to step 1
+
+			int windowStart = 0;
+			int windowEnd = (int) WindowSize;
 			
-			//My sender Sliding Windows Algorithm
-			//1.) sender will send each of the outstanding packets that fit in the window
-			//2.) for each packet sent, if ACK isnt received by timout, retransmit
-			//3.) once sender it receives an ACK, it will check its ACK #
-			//4.) if the ACK # corresponds to a packet # behind the window, do nothing
-			//5.) else if the ACK # corresponds to the last ACK needed (== iterations) goto closeTransmission
-			//6.) Otherwise, sender will move the start of window to the packet after the ack # received 
-			//7.) if start of window seq # + (windowSize-1) > iterations, shrink window size by (seq # + (windowSize-1)- iterations)
-			//8.) go to step 1
+			//not checking for dropped ack to retransmit that specific packet
 			
-			//1.) sender will send each of the outstanding packets that fit in the window
-			int i = 0;
 			while (ackNumber != -1) {
-				for (int x=0; x < WindowSize; x++) {
-					
+
+				// 1.) sender will send each of the outstanding packets that fit in the window
+				for (int x = windowStart; x < windowEnd; x++) {
+					sendPacket(choppedFile, x);
+				}
+
+				// 3.) once sender it receives an ACK, it will check its ACK #
+				int ackReceived = receiveAck();
+				System.out.println();
+				
+
+				// 4.) if the ACK # corresponds to a packet # behind the window, do nothing
+				if (ackReceived < windowStart + 1) {
 
 				}
+				// 5.) else if the ACK # corresponds to the last ACK needed (== iterations) goto
+				// closeTransmission
+				else if (ackReceived == iterations) {
+					break;
+				}
+				if (ackReceived == -1) {
+					break;
+				}
+				// 6.) Otherwise, sender will move the start of window to the packet after the
+				// ack # received
+				else {
+					windowStart = ackReceived;
+					windowEnd = (int) (windowStart + WindowSize);
+				}
+				// 7.) if start of window seq # + (windowSize-1) > iterations, shrink window
+				// size by (seq # + (windowSize-1)- iterations)
+				if (windowStart + (WindowSize - 1) > iterations) {
+					WindowSize = WindowSize - (windowStart + (WindowSize - 1) - iterations);
+				}
+				// 8.) go to step 1
+
 			}
-			
-			
-			
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+
+		// ending transmission
+		closeTransfer();
+
 	}
 
 	// returns the local host address
@@ -506,15 +552,14 @@ public class RSendUDP implements RSendUDPI {
 		double duration = (endTime - startTime) / (double) 100;
 		System.out.println("Successfully transferred " + FileName + " (" + FileName.length() + " bytes) in " + duration
 				+ " seconds");
-		System.out.println(WindowSize);
 
 		return true;
 	}
 
 	public static void main(String[] args) {
 		RSendUDP sender = new RSendUDP();
-		sender.setMode(0);
-		sender.setModeParameter(1);
+		sender.setMode(1);
+		sender.setModeParameter(2);
 		sender.setTimeout(1000);
 		sender.setFilename("important.txt");
 		sender.setLocalPort(23456);

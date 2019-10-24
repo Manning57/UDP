@@ -202,7 +202,7 @@ public class RReceiveUDP implements RReceiveUDPI {
 			// once initial EOT info is stored, move onto receiving file data
 			socket.setSoTimeout(1000);
 			int mostRecentWrittenSeq = -5;
-			int headache = 0;
+			int lastPacket = 0;
 			while (ackNumber != (endNumber + 2)) {
 				try {
 					// receiving the packet
@@ -220,8 +220,9 @@ public class RReceiveUDP implements RReceiveUDPI {
 					byte[] testACK = Arrays.copyOfRange(buffer, 4, 8);
 					int testAck = ByteBuffer.wrap(testACK).getInt();
 
+					// last packet is received
 					if (seqNumber == endNumber) {
-						headache = 1;
+						lastPacket = 1;
 					}
 
 					// if we receive a message with seq of -1, that means file transfer complete
@@ -236,10 +237,13 @@ public class RReceiveUDP implements RReceiveUDPI {
 					int seq = ByteBuffer.wrap(seqA).getInt();
 					// checking to make sure data hasnt been written yet in case of dropped ACK
 					if (mostRecentWrittenSeq != seq) {
-						if (headache == 1) {
+						// write the trimmed last packet to final array
+						if (lastPacket == 1) {
 							byte[] headacheBuffer = Arrays.copyOfRange(buffer, 12, (MTU - testAck));
 							sendToFinalArray(headacheBuffer);
-						} else {
+						}
+						// write the packet to the final array
+						else {
 							byte[] dataToSave = Arrays.copyOfRange(buffer, 12, buffer.length);
 							sendToFinalArray(dataToSave);
 						}
@@ -253,7 +257,6 @@ public class RReceiveUDP implements RReceiveUDPI {
 					ackNumber++;
 
 				} catch (SocketTimeoutException e) {
-					// System.out.println("Message " + ackNumber + " not received\n");
 				}
 
 			}
@@ -281,27 +284,129 @@ public class RReceiveUDP implements RReceiveUDPI {
 
 			// once initial EOT info is stored, move onto receiving file data
 			socket.setSoTimeout(1000);
-			int mostRecentWrittenSeq = -5;
-			int headache = 0;
+
+			// My receiver Sliding Windows Algorithm
+			// 1.) Receives a packet
+			// 2.) if the sequence # is one already stored in finalFile, do nothing
+			// 3.) if the sequence # corresponds to the first packet in the window,
+				// a.) store packet in finalFile corresponding to its seq #
+				// b.) if sequence # received = last expected sequence #,
+						// send ACK for last packet
+						// break out of loop
+				// c.) slide window over by 1 + # of consecutive packets after this packet in
+				// finalFile
+				// d.) if start of window seq # + (windowSize-1) > endNumber, shrink window
+					// size by (seq # + (windowSize-1)- iterations)
+				// send ACK for packet one space before the window
+			// 4.) else, store packet in finalFile corresponding to its seq #
+			// 5.) goto step 1
+			// 6.) closeTransmission
+
+			int[] writtenData = new int[endNumber];
+			byte[][] preFinalFile = new byte[endNumber][1];
+			int windowStart = 0;
+			int windowEnd = windowStart + WindowSize;
+			System.out.println("window start: " + windowStart);
+			System.out.println("window end: " + windowEnd);
+			System.out.println();
 			
-			//finalFile buffer will be of length = endNumber
+			while (true) {
+				
+			// 1.) Receives a packet
+				socket.receive(packet);
+				
+				// printing messsage info
+				printInfo(buffer);
+				//printPacket(buffer);
+
+				// sequence number of the packet received
+				byte[] testSeq = Arrays.copyOfRange(buffer, 0, 4);
+				int seqNumber = ByteBuffer.wrap(testSeq).getInt();
+				
+				// ACK number of the packet received
+				byte[] testACK = Arrays.copyOfRange(buffer, 4, 8);
+				int testAck = ByteBuffer.wrap(testACK).getInt();
+				
+				// Data of the packet received
+				byte[] testData = Arrays.copyOfRange(buffer, 12, MTU);
+				
+				//storing data received
+				System.out.println("Storing message " + seqNumber + " in slot " + seqNumber);
+				writtenData[seqNumber-1] = 1;
+				if (seqNumber == endNumber) {
+					byte[] headacheBuffer = Arrays.copyOfRange(buffer, 12, (MTU - testAck));
+					preFinalFile[seqNumber-1] = headacheBuffer;
+
+				} else {
+					preFinalFile[seqNumber-1] = testData;
+				}
 			
-			//My receiver Sliding Windows Algorithm
-			//1.) Receives a packet
-			//2.) if the sequence # is one already stored in finalFile, do nothing
-			//3.) if the sequence # corresponds to the first packet in the window, 
-				//a.) store packet in finalFile corresponding to its seq #
-				//b.) slide window over by 1 + # of consecutive packets after this packet in finalFile
-				//c.) if windowSize == 1, 
-					//send ACK for last packet
-					//break out of loop
-			 	//d.) else if start of window seq # + (windowSize-1) > endNumber, shrink window size by (seq # + (windowSize-1)- iterations)
-					//send ACK for packet one space before the window
-			//4.) else, store packet in finalFile corresponding to its seq #
-			//5.) goto step 1
-			//6.) closeTransmission
+				String payload = new String(preFinalFile[seqNumber-1]);
+				
+				
+			// 2.) if the sequence # is one already stored in finalFile, do nothing
+				if (writtenData[seqNumber-1] == 1) {
+				
+
+				}
+				
+			// 3.) if the sequence # corresponds to the first packet in the window,
+				if (seqNumber-1 == windowStart) {
+					
+				// a.) store packet in finalFile corresponding to its seq #
+					//preFinalFile[seqNumber-1] = buffer;
+				// b.) if sequence # received = last expected sequence #,
+					if (seqNumber == endNumber) {
+					// send ACK for last packet
+						
+					// break out of loop
+						break;
+					}
+				// c.) slide window over by 1 + # of consecutive packets after this packet in
+				// finalFile
+					int slide = 1;
+					for (int x = seqNumber; x < writtenData.length; x++) {
+						if (writtenData[seqNumber] == 1) {
+							slide++;
+						} else {
+							break;
+						}
+					}
+					
+					System.out.println("sliding window over by " + slide);
+					
+					windowStart = windowStart + slide;
+					windowEnd = windowEnd + slide;
+					
+					System.out.println("window start: " + windowStart);
+					System.out.println("window end: " + windowEnd);
+					
+				// d.) if start of window seq # + (windowSize-1) > endNumber, shrink window
+				// size by (seq # + (windowSize-1)- iterations)
+				// better yet, make the windowEnd the endNumber
+					if (windowStart + (WindowSize - 1) > endNumber) {
+						windowEnd = endNumber;
+					}
+				// send ACK for packet one space before the window
+					sendAck(windowStart, windowStart, socket);
+					
+				// 4.) else, store packet in finalFile corresponding to its seq #
+				} else {
+					System.out.println("step 4");
+					//preFinalFile[seqNumber-1] = buffer;
+				}
+			}
 			
+			System.out.println();
+
+			//write final file
+			for (int x = 0; x < preFinalFile.length; x++) {
+				sendToFinalArray(preFinalFile[x]);				
+			}
+			writeFinalFile();
 			
+			// ending transmission
+			closeTransfer();
 			
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -419,8 +524,8 @@ public class RReceiveUDP implements RReceiveUDPI {
 
 	public static void main(String[] args) {
 		RReceiveUDP receiver = new RReceiveUDP();
-		receiver.setMode(0);
-		receiver.setModeParameter(1);
+		receiver.setMode(1);
+		receiver.setModeParameter(2);
 		receiver.setFilename("less_important.txt");
 		receiver.setLocalPort(32456); // sets receiver port
 
