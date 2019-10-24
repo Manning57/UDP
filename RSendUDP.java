@@ -262,17 +262,18 @@ public class RSendUDP implements RSendUDPI {
 
 	private static int receiveAck() throws IOException {
 		DatagramPacket recPacket = new DatagramPacket(recBuffer, recBuffer.length);
+		int ackRec;
 		try {
 			socket.receive(recPacket);
 			recBuffer = recPacket.getData();
-			int ackRec = ByteBuffer.wrap(recBuffer).getInt();
+			ackRec = ByteBuffer.wrap(recBuffer).getInt();
 			System.out.println("Message " + ackRec + " acknowledged with ACK " + ackRec);
 			return ackRec;
 		}
 		// if no ACK is received, timeout will cause packet to be resent
 		catch (SocketTimeoutException e) {
-			System.out.println("Message " + seqNumber + " timeout or got incorrect ACK\n");
-			return -1;
+			System.out.println("Message timeout or got incorrect ACK\n");
+			return -2;
 		}
 	}
 
@@ -346,25 +347,40 @@ public class RSendUDP implements RSendUDPI {
 			// size by (seq # + (windowSize-1)- iterations)
 			// 8.) go to step 1
 
-			int windowStart = 0;
-			int windowEnd = (int) WindowSize;
-			
-			//not checking for dropped ack to retransmit that specific packet
-			
+			int windowStart = 1;
+			int windowEnd = (int) WindowSize + windowStart;
+
+			System.out.println("window start " + windowStart);
+			System.out.println("window end " + windowEnd);
+
+			int[] acksReceived = new int[iterations];
+
+			// not checking for dropped ack to retransmit that specific packet
 			while (ackNumber != -1) {
 
 				// 1.) sender will send each of the outstanding packets that fit in the window
-				for (int x = windowStart; x < windowEnd; x++) {
-					sendPacket(choppedFile, x);
+				for (int x = windowStart-1; x < windowEnd; x++) {
+					if (x >= iterations) {
+
+					} else {
+						sendPacket(choppedFile, x);
+					}
 				}
 
 				// 3.) once sender it receives an ACK, it will check its ACK #
 				int ackReceived = receiveAck();
-				System.out.println();
-				
+
+				if (ackReceived > 0) {
+					acksReceived[ackReceived - 1] = 1;
+					for (int x = 0; x < acksReceived.length; x++) {
+						System.out.print(x + 1 + ":" + acksReceived[x] + " ");
+					}
+					System.out.println();
+					System.out.println();
+				}
 
 				// 4.) if the ACK # corresponds to a packet # behind the window, do nothing
-				if (ackReceived < windowStart + 1) {
+				if (ackReceived < windowStart) {
 
 				}
 				// 5.) else if the ACK # corresponds to the last ACK needed (== iterations) goto
@@ -378,8 +394,12 @@ public class RSendUDP implements RSendUDPI {
 				// 6.) Otherwise, sender will move the start of window to the packet after the
 				// ack # received
 				else {
-					windowStart = ackReceived;
-					windowEnd = (int) (windowStart + WindowSize);
+					if (ackReceived != -2) {
+							windowStart = ackReceived+1;
+							windowEnd = (int) (windowStart + WindowSize);
+							System.out.println("window start " + windowStart);
+							System.out.println("window end " + windowEnd);
+					}
 				}
 				// 7.) if start of window seq # + (windowSize-1) > iterations, shrink window
 				// size by (seq # + (windowSize-1)- iterations)
@@ -389,12 +409,15 @@ public class RSendUDP implements RSendUDPI {
 				// 8.) go to step 1
 
 			}
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
+		}catch(
 
-		// ending transmission
-		closeTransfer();
+	Exception e)
+	{
+		e.printStackTrace();
+	}
+
+	// ending transmission
+	closeTransfer();
 
 	}
 
@@ -559,7 +582,7 @@ public class RSendUDP implements RSendUDPI {
 	public static void main(String[] args) {
 		RSendUDP sender = new RSendUDP();
 		sender.setMode(1);
-		sender.setModeParameter(2);
+		sender.setModeParameter(4);
 		sender.setTimeout(1000);
 		sender.setFilename("important.txt");
 		sender.setLocalPort(23456);
